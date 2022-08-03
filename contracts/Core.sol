@@ -3,13 +3,16 @@
 
 pragma solidity ^0.8.0;
 
-import "./interfaces/IERC4907.sol";
-import "./helpers/Ownable.sol";
+import "./libraries/token/ERC4907/ERC4907.sol";
+import "./libraries/token/ERC4907/IERC4907.sol";
+import "./libraries/access/Ownable.sol";
 
 /// @title NFT Lending Platform Core
 /// @author Atsushi Mandai
 /// @notice sample code for NFT lending platform.
-contract Core is Ownable {
+contract Core is Ownable, ERC4907 {
+
+    constructor() ERC4907("stakedNFT", "stNFT") {}
 
     /***
     *
