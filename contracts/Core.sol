@@ -16,6 +16,15 @@ contract Core is Ownable, ERC4907 {
 
     /***
     *
+    * Events
+    *
+    ***/
+
+    
+
+
+    /***
+    *
     * VARIABLES
     *
     ***/
@@ -24,26 +33,23 @@ contract Core is Ownable, ERC4907 {
     * @dev {protocolFee / 1000} will be payed to the protocol.
     */
     uint16 public protocolFee;
-    uint256 private protocolBalance;
+    uint256 public protocolBalance;
+    uint256 public totalSupply;
 
     /**
-    * @Author Atsushi Mandai
-    * @dev The conditions are set by the NFT holder.
-    * - tokenAddress: Address of the contract issuing the NFT.
-    * - tokenId: tokenId of the NFT.
-    * - feePerDay: Daily rental fee of the NFT stated in ETH.
-    * - lendLimit: Last day of NFT rental.
-    * - minimumPerdiod: Minimum rental days.
-    * - affiliateReward: Percentage paid to affiliates. {affiliateFee / 1000} is used to caluclate the reward.
-    */
-    struct Condition {
+     * @Author Atsushi Mandai
+     * @dev Users receive stNFT by staking ERC4907 tokens in this contract.
+     * Each stNFT holds information such as lending conditions and amount earned by lending.
+     */
+    struct Metadata {
+        address nftContract;
+        uint256 nftId;
+        uint256 balance;
         uint256 feePerDay;
         uint256 lendLimitDate;
-        uint16 minimumPeriod;
         uint16 affiliateReward;
     }
-    mapping(address => mapping(uint256 => Condition)) public getCondition;
-    mapping(address => mapping(uint256 => uint256)) public getTokenBalance;
+    mapping(uint256 => Metadata) public getMetadata;
     mapping(address => uint256) public getAffiliateBalance;
 
 
@@ -63,7 +69,15 @@ contract Core is Ownable, ERC4907 {
             token.ownerOf(_tokenId) == _msgSender() || 
             token.getApproved(_tokenId) == _msgSender() || 
             token.isApprovedForAll(token.ownerOf(_tokenId), _msgSender()) == true,
-            "Only the owner or the approved operator could create a Condition."
+            "Only the owner or the approved operator could use this function."
+        );
+        _;
+    }
+
+    modifier onlyNFTOwner(uint256 _tokenId) {
+        require(
+            ownerOf(_tokenId) == _msgSender(),
+            "Only the owner of staked NFT could use this function."
         );
         _;
     }
@@ -71,7 +85,7 @@ contract Core is Ownable, ERC4907 {
 
     /***
     *
-    * PUBLIC FUNCTIONS
+    * PUBLIC GOVERNANCE FUNCTIONS
     *
     ***/
 
@@ -83,119 +97,6 @@ contract Core is Ownable, ERC4907 {
     }
 
     /**
-    * @dev Creates or Updates condition for lending a NFT.
-    */ 
-    function updateCondition(
-        address _tokenAddress,
-        uint256 _tokenId,
-        uint256 _feePerDay,
-        uint256 _lendLimitDate,
-        uint16 _minimumPeriod,
-        uint16 _affiliateReward
-    ) public isApprovedOrOwner(_tokenAddress, _tokenId) {
-        _checkApproval(_tokenAddress, _tokenId);
-        require(
-            _affiliateReward < 1000 - protocolFee,
-            "Affiliate reward exceeds the limit."
-        );
-        require(
-            IERC4907(_tokenAddress).userExpires(_tokenId) < _lendLimitDate,
-            "_lendLimitDate must be after the current expire date"
-        );
-        getCondition[_tokenAddress][_tokenId] = Condition(
-            _feePerDay,
-            _lendLimitDate,
-            _minimumPeriod,
-            _affiliateReward
-        );
-    }
-
-    /**
-    * @dev Lends NFT to a users.
-    */ 
-    function borrowNFT(
-        address _affiliate,
-        address _tokenAddress,
-        uint256 _tokenId,
-        uint16 _days
-    ) public payable {
-        _checkApproval(_tokenAddress, _tokenId);
-        Condition memory condition = getCondition[_tokenAddress][_tokenId];
-        require(
-            msg.value == condition.feePerDay * _days,
-            "ETH value does not match the fee."
-        );
-        require(
-            block.timestamp + (_days * 1 days) < condition.lendLimitDate,
-            "It exceeds the rental available date."
-        );
-        IERC4907 token = IERC4907(_tokenAddress);
-        require(
-            token.userExpires(_tokenId) < block.timestamp,
-            "Someone else is currently renting this NFT."
-        );
-        token.setUser(_tokenId, _msgSender(), uint64(block.timestamp + (_days * 1 days)));
-        uint256 fee1 = msg.value * protocolFee / 1000;
-        uint256 fee2 = msg.value * condition.affiliateReward / 1000;
-        protocolBalance = protocolBalance + fee1;
-        getAffiliateBalance[_affiliate] = getAffiliateBalance[_affiliate] + fee2;
-        getTokenBalance[_tokenAddress][_tokenId] = getTokenBalance[_tokenAddress][_tokenId] + (msg.value - fee1 - fee2);
-    }
-
-    /**
-    * @dev Lets current borrower extend the expire date.
-    */ 
-    function extendRental(
-        address _affiliate,
-        address _tokenAddress,
-        uint256 _tokenId,
-        uint16 _days
-    ) public payable {
-        _checkApproval(_tokenAddress, _tokenId);
-        Condition memory condition = getCondition[_tokenAddress][_tokenId];
-        require(
-            msg.value == condition.feePerDay * _days,
-            "ETH value does not match the fee."
-        );
-        IERC4907 token = IERC4907(_tokenAddress);
-        require(
-            token.userOf(_tokenId) == _msgSender(),
-            "Only the current borrower could call this function."
-        );
-        require(
-            token.userExpires(_tokenId) + (_days * 1 days) < condition.lendLimitDate,
-            "It exceeds the rental available date."
-        );
-        token.setUser(_tokenId, _msgSender(), uint64(token.userExpires(_tokenId) + (_days * 1 days)));
-        uint256 fee1 = msg.value * protocolFee / 1000;
-        uint256 fee2 = msg.value * condition.affiliateReward / 1000;
-        protocolBalance = protocolBalance + fee1;
-        getAffiliateBalance[_affiliate] = getAffiliateBalance[_affiliate] + fee2;
-        getTokenBalance[_tokenAddress][_tokenId] = getTokenBalance[_tokenAddress][_tokenId] + (msg.value - fee1 - fee2);
-    }
-
-    /**
-    * @dev Sends the token's ETH balance to its owner.
-    */ 
-    function claimTokenBalance(
-        address _tokenAddress,
-        uint256 _tokenId
-    ) public isApprovedOrOwner(_tokenAddress, _tokenId) {
-        uint256 amount = getTokenBalance[_tokenAddress][_tokenId];
-        getTokenBalance[_tokenAddress][_tokenId] = 0;
-        payable(IERC4907(_tokenAddress).ownerOf(_tokenId)).transfer(amount);
-    }
-
-    /**
-    * @dev Sends the affiliates ETH balance to its owner.
-    */ 
-    function claimAffiliateBalance() public {
-        uint256 amount = getAffiliateBalance[_msgSender()];
-        getAffiliateBalance[_msgSender()] = 0;
-        payable(_msgSender()).transfer(amount);
-    }
-
-    /**
     * @dev Sends the protocolBalance to owner of the protocol.
     */ 
     function withdraw() public onlyOwner {
@@ -204,18 +105,78 @@ contract Core is Ownable, ERC4907 {
         payable(_msgSender()).transfer(amount);
     }
 
+
     /***
     *
-    * Private Functions
+    * PUBLIC USER FUNCTIONS FOR LENDERS
     *
     ***/
 
-    function _checkApproval(address _tokenAddress, uint256 _tokenId) private view {
-        IERC4907 token = IERC4907(_tokenAddress);
-        require(
-            token.getApproved(_tokenId) == address(this) || 
-            token.isApprovedForAll(_msgSender(), address(this)) == true,
-            "Owner has not approved this protocol to lend the NFT."
+    /**
+     * @dev Transfers ERC4907 NFT from the owner to this contract.
+     * Then mints stNFT with Metadata to the owner.
+     */
+    function stakeNFT(
+        address _nftOwner,
+        address _nftContract,
+        uint256 _nftId,
+        uint256 _feePerDay,
+        uint256 _lendLimitDate,
+        uint16 _affiliateReward
+    ) public isApprovedOrOwner(_nftContract, _nftId) {
+        IERC4907 nft = IERC4907(_nftContract);
+        nft.transferFrom(_nftOwner, address(this), _nftId);
+        _mint(_nftOwner, totalSupply);
+        getMetadata[totalSupply] = Metadata(
+            _nftContract,
+            _nftId,
+            0,
+            _feePerDay,
+            _lendLimitDate,
+            _affiliateReward
+        );
+        totalSupply = totalSupply + 1;
+    }
+
+    function changeFeePerDay(
+        uint256 _tokenId,
+        uint256 _feePerDay
+    ) public onlyNFTOwner(_tokenId) {
+        getMetadata[_tokenId].feePerDay = _feePerDay;
+    }
+
+    function changeLendLimitDate(
+        uint256 _tokenId,
+        uint256 _lendLimitDate
+    ) public onlyNFTOwner(_tokenId) {
+        getMetadata[_tokenId].lendLimitDate = _lendLimitDate;
+    }
+
+    function changeAffiliateReward(
+        uint256 _tokenId,
+        uint16 _affiliateReward
+    ) public onlyNFTOwner(_tokenId) {
+        getMetadata[_tokenId].affiliateReward = _affiliateReward;
+    }
+
+    function withdrawNFT(
+        uint256 _tokenId
+    ) public onlyNFTOwner(_tokenId) {
+        IERC4907 nft = IERC4907(getMetadata[_tokenId].nftContract);
+        _burn(_tokenId);
+        nft.transferFrom(
+            address(this),
+            ownerOf(_tokenId),
+            getMetadata[_tokenId].nftId
         );
     }
-}
+
+    function withdrawBalance(
+        uint256 _tokenId
+    ) public onlyNFTOwner(_tokenId) {
+        uint256 amount = getMetadata[_tokenId].balance;
+        getMetadata[_tokenId].balance = 0;
+        payable(ownerOf(_tokenId)).transfer(amount);
+    }
+
+} 
