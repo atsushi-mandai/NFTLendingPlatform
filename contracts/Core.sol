@@ -56,7 +56,8 @@ contract Core is Ownable, ERC4907 {
     mapping(uint256 => Metadata) public getMetadata;
     mapping(address => uint256) public getBrokerBalance;
     mapping(address => uint256) public getAffiliateBalance;
-    mapping(address => uint256) public stakedNFTs;
+    mapping(address => uint256) public stakedNFTsByOwner;
+    mapping(address => uint256) public stakedNFTsByContract;
 
 
     /***
@@ -150,7 +151,7 @@ contract Core is Ownable, ERC4907 {
             true
         );
         totalSupply = totalSupply + 1;
-        stakedNFTs[_nftContract] = stakedNFTs[_nftContract] + 1;
+        stakedNFTsByContract[_nftContract] = stakedNFTsByContract[_nftContract] + 1;
     }
 
     /**
@@ -201,7 +202,7 @@ contract Core is Ownable, ERC4907 {
             nftOwner,
             nftId
         );
-        stakedNFTs[nftContract] = stakedNFTs[nftContract] - 1;
+        stakedNFTsByContract[nftContract] = stakedNFTsByContract[nftContract] - 1;
     }
 
     /**
@@ -213,6 +214,23 @@ contract Core is Ownable, ERC4907 {
         uint256 amount = getMetadata[_tokenId].balance;
         getMetadata[_tokenId].balance = 0;
         payable(ownerOf(_tokenId)).transfer(amount);
+    }
+
+    /**
+     * @dev Returns _tokenIds of stNFTs.
+     */
+    function getTokenIdsByOwner(
+        address _address
+    ) public view returns(uint256[] memory) {
+        uint256[] memory result = new uint256[](balanceOf(_address));
+        uint256 counter = 0;
+        for(uint256 i = 0; i < totalSupply; i++) { 
+            if(_address == ownerOf(i)) {
+                result[counter] = i;
+                counter = counter + 1;
+            }
+        }
+        return result;
     }
 
 
@@ -284,10 +302,10 @@ contract Core is Ownable, ERC4907 {
     /**
      * @dev Returns tokenIds of the stNFTs.
      */
-    function getTokenIds(
+    function getTokenIdsByContract(
         address _nftContract
     ) public view returns(uint256[] memory) {
-        uint256[] memory result = new uint256[](stakedNFTs[_nftContract]);
+        uint256[] memory result = new uint256[](stakedNFTsByContract[_nftContract]);
         uint256 counter = 0;
         for(uint256 i = 0; i < totalSupply; i++) { 
             if(
