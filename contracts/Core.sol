@@ -20,7 +20,7 @@ contract Core is Ownable, ERC4907 {
     *
     ***/
 
-    
+
 
 
     /***
@@ -30,9 +30,11 @@ contract Core is Ownable, ERC4907 {
     ***/
 
     /**
-    * @dev {protocolFee / 1000} will be payed to the protocol.
+    * @dev Lending fee multiplied by {protocolFee / 1000} will be payed to the protocol.
+    * Lending fee multiplied by {brokerFee / 1000} will be payed to the broker.
     */
     uint16 public protocolFee;
+    uint16 public brokerFee;
     uint256 public protocolBalance;
     uint256 public totalSupply;
 
@@ -40,6 +42,7 @@ contract Core is Ownable, ERC4907 {
      * @Author Atsushi Mandai
      * @dev Users receive stNFT by staking ERC4907 tokens in this contract.
      * Each stNFT holds information such as lending conditions and amount earned by lending.
+     * Lending fee multiplied by {affiliateReward / 1000} will be payed to the affiliate.
      */
     struct Metadata {
         address nftContract;
@@ -48,9 +51,12 @@ contract Core is Ownable, ERC4907 {
         uint256 feePerDay;
         uint256 lendLimitDate;
         uint16 affiliateReward;
+        bool stake;
     }
     mapping(uint256 => Metadata) public getMetadata;
+    mapping(address => uint256) public getBrokerBalance;
     mapping(address => uint256) public getAffiliateBalance;
+    mapping(address => uint256) public stakedNFTs;
 
 
     /***
@@ -97,6 +103,13 @@ contract Core is Ownable, ERC4907 {
     }
 
     /**
+    * @dev Sets new brokerFee.
+    */ 
+    function setbrokerFee(uint16 _newFee) public onlyOwner {
+        brokerFee = _newFee;
+    }
+
+    /**
     * @dev Sends the protocolBalance to owner of the protocol.
     */ 
     function withdraw() public onlyOwner {
@@ -133,11 +146,16 @@ contract Core is Ownable, ERC4907 {
             0,
             _feePerDay,
             _lendLimitDate,
-            _affiliateReward
+            _affiliateReward,
+            true
         );
         totalSupply = totalSupply + 1;
+        stakedNFTs[_nftContract] = stakedNFTs[_nftContract] + 1;
     }
 
+    /**
+     * @dev Changes feePerDay of the staked NFT.
+     */
     function changeFeePerDay(
         uint256 _tokenId,
         uint256 _feePerDay
@@ -145,6 +163,9 @@ contract Core is Ownable, ERC4907 {
         getMetadata[_tokenId].feePerDay = _feePerDay;
     }
 
+    /**
+     * @dev Changes lendLimitDate of the staked NFT.
+     */
     function changeLendLimitDate(
         uint256 _tokenId,
         uint256 _lendLimitDate
@@ -152,6 +173,9 @@ contract Core is Ownable, ERC4907 {
         getMetadata[_tokenId].lendLimitDate = _lendLimitDate;
     }
 
+    /**
+     * @dev Changes affiliateReward of the staked NFT.
+     */
     function changeAffiliateReward(
         uint256 _tokenId,
         uint16 _affiliateReward
@@ -159,24 +183,182 @@ contract Core is Ownable, ERC4907 {
         getMetadata[_tokenId].affiliateReward = _affiliateReward;
     }
 
+    /**
+     * @dev Lets the owner withdraw his staked NFT.
+     */
     function withdrawNFT(
         uint256 _tokenId
     ) public onlyNFTOwner(_tokenId) {
-        IERC4907 nft = IERC4907(getMetadata[_tokenId].nftContract);
+        _checkUserExistance(_tokenId);
+        address nftContract = getMetadata[_tokenId].nftContract;
+        IERC4907 nft = IERC4907(nftContract);
+        address nftOwner = ownerOf(_tokenId);
+        uint256 nftId = getMetadata[_tokenId].nftId;
+        getMetadata[_tokenId].stake = false;
         _burn(_tokenId);
         nft.transferFrom(
             address(this),
-            ownerOf(_tokenId),
-            getMetadata[_tokenId].nftId
+            nftOwner,
+            nftId
         );
+        stakedNFTs[nftContract] = stakedNFTs[nftContract] - 1;
     }
 
+    /**
+     * @dev Lets the owner claim earned balance.
+     */
     function withdrawBalance(
         uint256 _tokenId
     ) public onlyNFTOwner(_tokenId) {
         uint256 amount = getMetadata[_tokenId].balance;
         getMetadata[_tokenId].balance = 0;
         payable(ownerOf(_tokenId)).transfer(amount);
+    }
+
+
+    /***
+    *
+    * PUBLIC USER FUNCTIONS FOR BORROWERS
+    *
+    ***/
+
+    /**
+     * @dev Lets a user borrow NFT.
+     */
+    function borrowNFT(
+        uint256 _tokenId,
+        uint64 _expireDate,
+        address _broker,
+        address _affiliate
+    ) public payable {
+        require(
+            _expireDate < getMetadata[_tokenId].lendLimitDate,
+            "expireDate must be before lendLimitDate."
+        );
+        _checkUserExistance(_tokenId);
+        uint256 lendFee = ((_expireDate - block.timestamp) / 60 / 60 / 24) * getMetadata[_tokenId].feePerDay;
+        uint256 feeToProtocol = lendFee * protocolFee / 1000;
+        uint256 feeToBroker = lendFee * brokerFee / 1000;
+        uint256 feeToAffiliate = lendFee * getMetadata[_tokenId].affiliateReward / 1000;
+        uint256 feeToOwner = lendFee - feeToAffiliate;
+        require(
+            msg.value > lendFee + feeToProtocol + feeToBroker,
+            "ETH value does not match the fee."
+        );
+        if(feeToProtocol > 0) {
+            protocolBalance = protocolBalance + feeToProtocol;
+        }
+        if(feeToBroker > 0) {
+            getBrokerBalance[_broker] = getBrokerBalance[_broker] + feeToBroker;
+        }
+        if(feeToAffiliate > 0) {
+            getAffiliateBalance[_affiliate] = getAffiliateBalance[_affiliate] + feeToAffiliate;
+        }
+        getMetadata[_tokenId].balance = getMetadata[_tokenId].balance + feeToOwner;
+        ERC4907 nft = ERC4907(getMetadata[_tokenId].nftContract);
+        nft.setUser(getMetadata[_tokenId].nftId, _msgSender(), _expireDate);
+    }
+
+    /**
+     * @dev Returns tokenId of the stNFT.
+     */
+    function getTokenId(
+        address _nftContract,
+        uint256 _nftId
+    ) public view returns(bool, uint256) {
+        bool isStaked = false;
+        uint256 tokenId;
+        for(uint256 i = 0; i < totalSupply; i++) { 
+            if(
+                _nftContract == getMetadata[i].nftContract &&
+                _nftId == getMetadata[i].nftId &&
+                getMetadata[i].stake == true
+            ) {
+                isStaked = true;
+                tokenId = i;
+            }
+        }
+        return(isStaked, tokenId);
+    }
+
+    /**
+     * @dev Returns tokenIds of the stNFTs.
+     */
+    function getTokenIds(
+        address _nftContract
+    ) public view returns(uint256[] memory) {
+        uint256[] memory result = new uint256[](stakedNFTs[_nftContract]);
+        uint256 counter = 0;
+        for(uint256 i = 0; i < totalSupply; i++) { 
+            if(
+                _nftContract == getMetadata[i].nftContract &&
+                getMetadata[i].stake == true
+            ) {
+                result[counter] = i;
+                counter = counter + 1;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * @dev Returns total fee to borrow the NFT.
+     */
+    function getTotalFee(
+        uint256 _tokenId,
+        uint256 _expireDate
+    ) public view returns(uint256) {
+        uint256 lendFee = ((_expireDate - block.timestamp) / 60 / 60 / 24) * getMetadata[_tokenId].feePerDay;
+        uint256 feeToProtocol = lendFee * protocolFee / 1000;
+        uint256 feeToBroker = lendFee * brokerFee / 1000;
+        return lendFee + feeToProtocol + feeToBroker;
+    }
+
+
+    /***
+    *
+    * PUBLIC USER FUNCTIONS FOR BROKERS
+    *
+    ***/
+
+    /**
+     * @dev Lets broker withdraw his/her balance.
+     */
+    function withdrawBrokerReward() public {
+        uint256 balance = getBrokerBalance[_msgSender()];
+        getBrokerBalance[_msgSender()] = 0;
+        payable(address(this)).transfer(balance);
+    }
+
+
+    /***
+    *
+    * PUBLIC USER FUNCTIONS FOR AFFILIATES
+    *
+    ***/
+
+    /**
+     * @dev Lets affiliate withdraw his/her balance.
+     */
+    function withdrawAffiliateReward() public {
+        uint256 balance = getAffiliateBalance[_msgSender()];
+        getAffiliateBalance[_msgSender()] = 0;
+        payable(address(this)).transfer(balance);
+    }
+
+
+    /***
+    *
+    * PRIVATE FUNCTIONS
+    *
+    ***/
+
+    function _checkUserExistance(uint256 _tokenId) private view {
+        ERC4907 nft = ERC4907(getMetadata[_tokenId].nftContract);
+        require(
+            nft.userExpires(getMetadata[_tokenId].nftId) < block.timestamp,
+            "This NFT has not yet ended its rental period for users."
+        );
     }
 
 } 
