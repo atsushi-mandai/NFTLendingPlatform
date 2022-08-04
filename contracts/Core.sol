@@ -20,7 +20,11 @@ contract Core is Ownable, ERC4907 {
     *
     ***/
 
-
+    /*
+     * @dev Returns tokenId of the stNFT.
+     */
+    event Staked(uint256 tokenId);
+    event CompletedTX(bool complete);
 
 
     /***
@@ -152,6 +156,7 @@ contract Core is Ownable, ERC4907 {
         );
         totalSupply = totalSupply + 1;
         stakedNFTsByContract[_nftContract] = stakedNFTsByContract[_nftContract] + 1;
+        emit Staked(totalSupply - 1);
     }
 
     /**
@@ -162,6 +167,7 @@ contract Core is Ownable, ERC4907 {
         uint256 _feePerDay
     ) public onlyNFTOwner(_tokenId) {
         getMetadata[_tokenId].feePerDay = _feePerDay;
+        emit CompletedTX(true);
     }
 
     /**
@@ -172,6 +178,7 @@ contract Core is Ownable, ERC4907 {
         uint256 _lendLimitDate
     ) public onlyNFTOwner(_tokenId) {
         getMetadata[_tokenId].lendLimitDate = _lendLimitDate;
+        emit CompletedTX(true);
     }
 
     /**
@@ -182,6 +189,7 @@ contract Core is Ownable, ERC4907 {
         uint16 _affiliateReward
     ) public onlyNFTOwner(_tokenId) {
         getMetadata[_tokenId].affiliateReward = _affiliateReward;
+        emit CompletedTX(true);
     }
 
     /**
@@ -203,6 +211,7 @@ contract Core is Ownable, ERC4907 {
             nftId
         );
         stakedNFTsByContract[nftContract] = stakedNFTsByContract[nftContract] - 1;
+        emit CompletedTX(true);
     }
 
     /**
@@ -214,6 +223,7 @@ contract Core is Ownable, ERC4907 {
         uint256 amount = getMetadata[_tokenId].balance;
         getMetadata[_tokenId].balance = 0;
         payable(ownerOf(_tokenId)).transfer(amount);
+        emit CompletedTX(true);
     }
 
     /**
@@ -275,6 +285,7 @@ contract Core is Ownable, ERC4907 {
         getMetadata[_tokenId].balance = getMetadata[_tokenId].balance + feeToOwner;
         ERC4907 nft = ERC4907(getMetadata[_tokenId].nftContract);
         nft.setUser(getMetadata[_tokenId].nftId, _msgSender(), _expireDate);
+        emit CompletedTX(true);
     }
 
     /**
@@ -346,6 +357,7 @@ contract Core is Ownable, ERC4907 {
         uint256 balance = getBrokerBalance[_msgSender()];
         getBrokerBalance[_msgSender()] = 0;
         payable(address(this)).transfer(balance);
+        emit CompletedTX(true);
     }
 
 
@@ -362,6 +374,7 @@ contract Core is Ownable, ERC4907 {
         uint256 balance = getAffiliateBalance[_msgSender()];
         getAffiliateBalance[_msgSender()] = 0;
         payable(address(this)).transfer(balance);
+        emit CompletedTX(true);
     }
 
 
